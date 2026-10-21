@@ -61,7 +61,13 @@ class Grabadora(private val context: Context) {
             // El micrófono Bluetooth solo existe en modo llamada (SCO / LE Audio); Samsung pide además el modo.
             modoAnterior = audio.mode
             audio.mode = AudioManager.MODE_IN_COMMUNICATION
-            usaComunicacion = audio.setCommunicationDevice(elegido!!)
+            // setCommunicationDevice pide la salida (el lado "audífono"), no el micrófono: buscar la par.
+            val salida = audio.availableCommunicationDevices.firstOrNull {
+                it.address == elegido!!.address &&
+                    (it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO || it.type == AudioDeviceInfo.TYPE_BLE_HEADSET)
+            }
+            usaComunicacion = salida != null && audio.setCommunicationDevice(salida)
+            Log.i(TAG, "Bluetooth: salida=${salida?.productName} setCommunicationDevice=$usaComunicacion")
         }
         val r = crearRecord(if (bluetooth) MediaRecorder.AudioSource.VOICE_COMMUNICATION else MediaRecorder.AudioSource.MIC)
         if (elegido != null) r.setPreferredDevice(elegido)
