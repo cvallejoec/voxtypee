@@ -9,5 +9,7 @@
         <item name="android:textColorPrimary">@color/texto</item>
         <item name="android:windowActionBar">false</item>
         <item name="android:windowNoTitle">true</item>
+        <item name="android:windowLightStatusBar">@bool/barras_claras</item>
+        <item name="android:windowLightNavigationBar">@bool/barras_claras</item>
     </style>
 </resources>

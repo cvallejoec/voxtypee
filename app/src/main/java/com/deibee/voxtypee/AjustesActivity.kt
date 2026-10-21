@@ -14,6 +14,8 @@ import android.provider.Settings
 import android.text.InputType
 import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
+import android.view.WindowInsets
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.view.accessibility.AccessibilityManager
@@ -79,6 +81,12 @@ class AjustesActivity : Activity() {
         setContentView(ScrollView(this).apply {
             isFillViewport = true
             addView(contenido)
+            // Android 15+ dibuja de borde a borde: dejar espacio a las barras y al teclado.
+            setOnApplyWindowInsetsListener { v, insets ->
+                val barras = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.ime())
+                v.setPadding(barras.left, barras.top, barras.right, barras.bottom)
+                insets
+            }
         })
     }
 
@@ -150,9 +158,19 @@ class AjustesActivity : Activity() {
 
         addView(etiqueta("Idioma"))
         val selectorIdioma = Spinner(this@AjustesActivity).apply {
-            adapter = ArrayAdapter(
+            adapter = object : ArrayAdapter<String>(
                 this@AjustesActivity, android.R.layout.simple_spinner_dropdown_item, idiomas.map { it.second }
-            )
+            ) {
+                // El layout del sistema trae texto blanco en algunos temas (One UI): forzar el nuestro.
+                override fun getView(posicion: Int, vista: View?, padre: ViewGroup) =
+                    (super.getView(posicion, vista, padre) as TextView).apply { setTextColor(getColor(R.color.texto)) }
+
+                override fun getDropDownView(posicion: Int, vista: View?, padre: ViewGroup) =
+                    (super.getDropDownView(posicion, vista, padre) as TextView).apply {
+                        setTextColor(getColor(R.color.texto))
+                        setBackgroundColor(getColor(R.color.tarjeta))
+                    }
+            }
             setSelection(idiomas.indexOfFirst { it.first == ajustes.idioma }.coerceAtLeast(0))
         }
         addView(selectorIdioma)
