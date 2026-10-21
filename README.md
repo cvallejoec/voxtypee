@@ -42,7 +42,7 @@ Para actualizar, descarga la APK nueva e instálala encima: se conservan los aju
 | Modelo en vivo | `gpt-live-transcribe` | Va escribiendo mientras hablas (Realtime API por WebSocket). |
 | Idioma | Español | O detección automática. |
 | Texto en vivo | En el campo | **En el campo**: se escribe mientras hablas y se corrige al final. **Franja**: se ve sobre el teclado y se escribe al terminar. **Apagado**: solo al terminar. |
-| Pasada final | Encendida | Al terminar, el audio completo pasa por el modelo final y ese texto reemplaza al de en vivo. Más precisa; cuesta ~el doble. Apagada, queda el texto del modelo en vivo. |
+| Corregir al terminar | Encendido | Al terminar, el audio completo pasa por el modelo final y ese texto reemplaza al de en vivo. Más precisa; cuesta ~el doble. Apagada, queda el texto del modelo en vivo. |
 | Micrófono | Automático | Usa los audífonos conectados (Bluetooth, USB o cable) y, si no hay, el del teléfono. Con Bluetooth el audio pasa a modo llamada mientras dictas. |
 | Modo | Tocar | **Tocar**: toca para empezar y para terminar; arrastra la burbuja para moverla. **Mantener**: habla mientras la mantienes; arrastra afuera para cancelar. |
 | Vocabulario | — | Nombres, siglas y jerga; van al modelo como `keywords` (con `prompt` los modelos gpt-*transcribe casi no los respetan). |

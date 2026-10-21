@@ -216,7 +216,7 @@ class AjustesActivity : Activity() {
         addView(grupo)
 
         addView(Switch(this@AjustesActivity).apply {
-            text = "Pasada final con el modelo de archivo: más precisa, cuesta ~el doble y tarda ~2 s más"
+            text = "Corregir todo el texto al terminar (más preciso, pero tarda ~2 s más y cuesta ~el doble)"
             textSize = 15f
             setTextColor(getColor(R.color.texto))
             isChecked = ajustes.pasadaFinal
