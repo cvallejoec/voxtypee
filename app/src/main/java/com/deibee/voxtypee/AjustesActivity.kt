@@ -6,6 +6,7 @@ import android.app.AlertDialog
 import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Rect
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
@@ -87,6 +88,8 @@ class AjustesActivity : Activity() {
             setOnApplyWindowInsetsListener { v, insets ->
                 val barras = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.ime())
                 v.setPadding(barras.left, barras.top, barras.right, barras.bottom)
+                // Con el teclado abierto, que el campo con foco quede a la vista.
+                v.post { v.findFocus()?.let { it.requestRectangleOnScreen(Rect(0, 0, it.width, it.height)) } }
                 insets
             }
         })

@@ -67,6 +67,7 @@ class EnVivo(
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                if (terminado) return
                 Log.w(TAG, "En vivo falló (${response?.code}): $t")
                 terminar(null)
             }

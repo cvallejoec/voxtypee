@@ -24,6 +24,8 @@ class Grabadora(private val context: Context) {
     private var hilo: Thread? = null
     @Volatile private var activa = false
     private var usaComunicacion = false
+    private var modoAnterior: Int? = null
+    @Volatile private var enBluetooth = false
 
     val archivo: File = File(context.cacheDir, "dictado.wav")
     var inicio = 0L
@@ -41,34 +43,49 @@ class Grabadora(private val context: Context) {
     val grabando: Boolean get() = activa
 
     @SuppressLint("MissingPermission")
+    private fun crearRecord(fuente: Int): AudioRecord {
+        val minimo = AudioRecord.getMinBufferSize(TASA, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
+        val r = AudioRecord(fuente, TASA, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, maxOf(minimo, PEDAZO * 4))
+        if (r.state != AudioRecord.STATE_INITIALIZED) {
+            r.release()
+            throw IllegalStateException("AudioRecord no se inicializó")
+        }
+        return r
+    }
+
+    /** Abre el micrófono: los audífonos si se piden y hay, si no el del teléfono. */
+    private fun abrir(conAudifonos: Boolean): AudioRecord {
+        val elegido = if (conAudifonos) audifonos() else null
+        val bluetooth = elegido?.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO || elegido?.type == AudioDeviceInfo.TYPE_BLE_HEADSET
+        if (bluetooth) {
+            // El micrófono Bluetooth solo existe en modo llamada (SCO / LE Audio); Samsung pide además el modo.
+            modoAnterior = audio.mode
+            audio.mode = AudioManager.MODE_IN_COMMUNICATION
+            usaComunicacion = audio.setCommunicationDevice(elegido!!)
+        }
+        val r = crearRecord(if (bluetooth) MediaRecorder.AudioSource.VOICE_COMMUNICATION else MediaRecorder.AudioSource.MIC)
+        if (elegido != null) r.setPreferredDevice(elegido)
+        dispositivo = elegido?.productName?.toString()?.takeIf { it.isNotBlank() } ?: if (elegido != null) "Audífonos" else "Micrófono del teléfono"
+        enBluetooth = bluetooth
+        Log.i(TAG, "Micrófono: $dispositivo (tipo ${elegido?.type ?: "integrado"})")
+        return r
+    }
+
+    private fun soltarComunicacion() {
+        if (usaComunicacion) {
+            audio.clearCommunicationDevice()
+            usaComunicacion = false
+        }
+        modoAnterior?.let { audio.mode = it }
+        modoAnterior = null
+    }
+
     fun iniciar(soloTelefono: Boolean, alAudio: (ByteArray) -> Unit) {
         archivo.delete()
         amplitudMaxima = 0
         nivelActual = 0
 
-        val minimo = AudioRecord.getMinBufferSize(TASA, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
-        val r = AudioRecord(
-            MediaRecorder.AudioSource.MIC, TASA, AudioFormat.CHANNEL_IN_MONO,
-            AudioFormat.ENCODING_PCM_16BIT, maxOf(minimo, PEDAZO * 4)
-        )
-        if (r.state != AudioRecord.STATE_INITIALIZED) {
-            r.release()
-            throw IllegalStateException("AudioRecord no se inicializó")
-        }
-
-        val elegido = if (soloTelefono) null else audifonos()
-        if (elegido != null) {
-            // Los micrófonos Bluetooth solo funcionan como "dispositivo de comunicación" (SCO/LE Audio).
-            if (elegido.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO || elegido.type == AudioDeviceInfo.TYPE_BLE_HEADSET) {
-                usaComunicacion = audio.setCommunicationDevice(elegido)
-            }
-            r.setPreferredDevice(elegido)
-            dispositivo = elegido.productName?.toString()?.takeIf { it.isNotBlank() } ?: "Audífonos"
-        } else {
-            dispositivo = "Micrófono del teléfono"
-        }
-        Log.i(TAG, "Micrófono: $dispositivo (tipo ${elegido?.type ?: "integrado"})")
-
+        var r = abrir(conAudifonos = !soloTelefono)
         RandomAccessFile(archivo, "rw").use { it.setLength(0); it.write(cabeceraWav(0)) }
         record = r
         r.startRecording()
@@ -81,6 +98,16 @@ class Grabadora(private val context: Context) {
                 wav.seek(44)
                 var total = 0
                 while (activa) {
+                    // Audífonos conectados pero mudos (no abrió el SCO, están guardados…): pasar al teléfono.
+                    if (enBluetooth && amplitudMaxima == 0 && System.currentTimeMillis() - inicio > ESPERA_BLUETOOTH_MS) {
+                        Log.w(TAG, "$dispositivo no entrega audio: cambio al micrófono del teléfono")
+                        runCatching { r.stop() }
+                        r.release()
+                        soltarComunicacion()
+                        r = runCatching { abrir(conAudifonos = false) }.getOrNull() ?: break
+                        record = r
+                        r.startRecording()
+                    }
                     val leidos = r.read(buffer, 0, buffer.size)
                     if (leidos <= 0) continue
                     val pedazo = buffer.copyOf(leidos)
@@ -104,17 +131,13 @@ class Grabadora(private val context: Context) {
 
     /** Devuelve los milisegundos grabados; el WAV queda cerrado y listo. */
     fun detener(): Long {
-        val r = record ?: return 0
-        record = null
+        if (record == null) return 0
         activa = false
-        runCatching { r.stop() }
         hilo?.join(1500)
         hilo = null
-        r.release()
-        if (usaComunicacion) {
-            audio.clearCommunicationDevice()
-            usaComunicacion = false
-        }
+        record?.let { runCatching { it.stop() }; it.release() }
+        record = null
+        soltarComunicacion()
         return System.currentTimeMillis() - inicio
     }
 
@@ -155,5 +178,6 @@ class Grabadora(private val context: Context) {
         const val TASA = 24_000
         /** 100 ms de audio. */
         private const val PEDAZO = TASA * 2 / 10
+        private const val ESPERA_BLUETOOTH_MS = 1500L
     }
 }
