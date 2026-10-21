@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="acento">#5B5BD6</color>
+    <color name="grabando">#E5484D</color>
+    <color name="fondo">#F7F7FA</color>
+    <color name="tarjeta">#FFFFFF</color>
+    <color name="texto">#1C1C24</color>
+    <color name="texto_suave">#6B6B7B</color>
+    <color name="borde">#E3E3EA</color>
+    <color name="ok">#30A46C</color>
+    <color name="falta">#E5484D</color>
+</resources>

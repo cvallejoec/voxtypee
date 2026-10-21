@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">VoxTypee</string>
+    <string name="resumen_accesibilidad">Muestra un botón de dictado cuando se abre el teclado.</string>
+    <string name="descripcion_accesibilidad">VoxTypee usa la accesibilidad solo para tres cosas: saber cuándo está abierto el teclado, mostrar el botón de dictado encima y escribir el texto dictado en el campo donde está el cursor. No lee ni guarda lo que escribes. El audio va directo a tu proveedor de IA con tu propia clave.</string>
+</resources>
