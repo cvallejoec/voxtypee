@@ -38,11 +38,18 @@ object Transcriptor {
                 }
                 campo("model", ajustes.modelo)
                 campo("response_format", "json")
-                if (ajustes.idioma.isNotBlank()) campo("language", ajustes.idioma)
-                if (ajustes.prompt.isNotBlank()) campo("prompt", ajustes.prompt)
+                if (ajustes.modelo.startsWith("gpt-")) {
+                    // Los modelos gpt-*transcribe usan listas; con `prompt` el vocabulario casi no se respeta.
+                    if (ajustes.idioma.isNotBlank()) campo("languages[]", ajustes.idioma)
+                    ajustes.vocabulario.forEach { campo("keywords[]", it) }
+                } else {
+                    // whisper-1 y servidores compatibles: campos clásicos.
+                    if (ajustes.idioma.isNotBlank()) campo("language", ajustes.idioma)
+                    if (ajustes.vocabulario.isNotEmpty()) campo("prompt", "Términos: ${ajustes.vocabulario.joinToString(", ")}.")
+                }
                 salida.writeBytes(
-                    "--$limite\r\nContent-Disposition: form-data; name=\"file\"; filename=\"dictado.m4a\"\r\n" +
-                        "Content-Type: audio/mp4\r\n\r\n"
+                    "--$limite\r\nContent-Disposition: form-data; name=\"file\"; filename=\"${audio.name}\"\r\n" +
+                        "Content-Type: audio/wav\r\n\r\n"
                 )
                 audio.inputStream().use { it.copyTo(salida) }
                 salida.writeBytes("\r\n--$limite--\r\n")

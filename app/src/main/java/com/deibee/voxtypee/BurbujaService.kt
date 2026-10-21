@@ -10,6 +10,8 @@ import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.graphics.PixelFormat
 import android.graphics.Rect
+import android.graphics.drawable.GradientDrawable
+import android.text.TextUtils
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -22,6 +24,7 @@ import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
+import android.widget.TextView
 import android.widget.Toast
 import kotlin.concurrent.thread
 import kotlin.math.abs
@@ -43,7 +46,6 @@ class BurbujaService : AccessibilityService(), SharedPreferences.OnSharedPrefere
     private var tecladoArriba = -1
 
     private var estado = Estado.REPOSO
-    private var destino: AccessibilityNodeInfo? = null
 
     override fun onServiceConnected() {
         ajustes = Ajustes(this)
@@ -196,6 +198,16 @@ class BurbujaService : AccessibilityService(), SharedPreferences.OnSharedPrefere
 
     // ---------- Dictado ----------
 
+    /** Cada dictado tiene su número: los callbacks de uno viejo se ignoran. */
+    private var turno = 0
+    private var escritor: Escritor? = null
+    private var enVivo: EnVivo? = null
+    private var vivoFinal: String? = null
+    private var vivoTerminado = false
+    private var esperandoVivo = false
+    private var finalizado = true
+    private var franja: Franja? = null
+
     private fun iniciar() {
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             aviso("VoxTypee necesita permiso de micrófono")
@@ -207,23 +219,36 @@ class BurbujaService : AccessibilityService(), SharedPreferences.OnSharedPrefere
             abrirAjustes()
             return
         }
-        destino = campoConFoco()
+        val miTurno = ++turno
+        escritor = Escritor(campoConFoco())
+        vivoFinal = null
+        vivoTerminado = false
+        esperandoVivo = false
+        finalizado = false
         cambiarEstado(Estado.GRABANDO)
         boton?.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
 
+        enVivo = if (ajustes.vivo == Ajustes.VIVO_APAGADO) null else runCatching {
+            EnVivo(
+                ajustes,
+                alTexto = { texto -> principal.post { if (miTurno == turno) mostrarParcial(texto) } },
+                alTerminar = { texto -> principal.post { if (miTurno == turno) alTerminarVivo(texto) } },
+            )
+        }.onFailure { Log.w(TAG, "No pude abrir la sesión en vivo: $it") }.getOrNull()
+
         var arrancado = false
         val arrancar = arrancar@{ enPrimerPlano: Boolean ->
-            if (arrancado || estado != Estado.GRABANDO) return@arrancar
+            if (arrancado || miTurno != turno || estado != Estado.GRABANDO) return@arrancar
             arrancado = true
-            Log.i(TAG, "Grabando (servicio en primer plano: $enPrimerPlano)")
+            Log.i(TAG, "Grabando (servicio en primer plano: $enPrimerPlano, en vivo: ${enVivo != null})")
             try {
-                grabadora.iniciar()
+                val vivo = enVivo
+                grabadora.iniciar(ajustes.soloMicrofonoTelefono) { pcm -> vivo?.enviar(pcm) }
                 principal.post(medirNivel)
             } catch (e: Exception) {
                 Log.e(TAG, "No pude grabar", e)
                 aviso("No pude abrir el micrófono")
-                detenerServicio()
-                cambiarEstado(Estado.REPOSO)
+                cancelarGrabacion()
             }
         }
         try {
@@ -249,6 +274,14 @@ class BurbujaService : AccessibilityService(), SharedPreferences.OnSharedPrefere
         }
     }
 
+    /** Texto en vivo: en el campo si se puede, si no en la franja. */
+    private fun mostrarParcial(texto: String) {
+        if (finalizado || texto.isBlank()) return
+        val e = escritor
+        if (ajustes.vivo == Ajustes.VIVO_CAMPO && e != null && e.enCampo && e.escribir(texto)) return
+        (franja ?: Franja().also { franja = it }).mostrar(texto)
+    }
+
     private fun detener() {
         principal.removeCallbacks(medirNivel)
         val duracion = grabadora.detener()
@@ -256,41 +289,99 @@ class BurbujaService : AccessibilityService(), SharedPreferences.OnSharedPrefere
         detenerServicio()
         boton?.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
 
-        if (duracion < MINIMO_MS) {
-            if (ajustes.mantenerParaHablar) aviso("Mantén apretado mientras hablas")
-            cambiarEstado(Estado.REPOSO)
-            return
-        }
-        if (silencio) {
-            Log.w(TAG, "La grabación salió en silencio total")
-            aviso("El micrófono no entregó audio")
-            cambiarEstado(Estado.REPOSO)
+        if (duracion < MINIMO_MS || silencio) {
+            if (silencio && duracion >= MINIMO_MS) {
+                Log.w(TAG, "La grabación salió en silencio total")
+                aviso("El micrófono no entregó audio")
+            } else if (ajustes.mantenerParaHablar) {
+                aviso("Mantén apretado mientras hablas")
+            }
+            descartar()
             return
         }
         cambiarEstado(Estado.TRANSCRIBIENDO)
+        enVivo?.cerrar()
+
+        // Sin pasada final (o sin sesión en vivo que la reemplace) manda el modelo en vivo.
+        if (!ajustes.pasadaFinal && enVivo != null) {
+            esperandoVivo = true
+            if (vivoTerminado) alTerminarVivo(vivoFinal)
+            val miTurno = turno
+            principal.postDelayed({ if (miTurno == turno && !finalizado) pasadaConArchivo() }, ESPERA_VIVO_MS)
+        } else {
+            pasadaConArchivo()
+        }
+    }
+
+    private fun alTerminarVivo(texto: String?) {
+        vivoTerminado = true
+        vivoFinal = texto ?: enVivo?.parcial?.takeIf { it.isNotBlank() }
+        if (!esperandoVivo || finalizado) return
+        val t = vivoFinal
+        if (t.isNullOrBlank()) pasadaConArchivo() else finalizar(t)
+    }
+
+    private fun pasadaConArchivo() {
+        esperandoVivo = false
+        val miTurno = turno
         thread(name = "transcribir") {
             val resultado = runCatching { Transcriptor.transcribir(grabadora.archivo, ajustes) }
-            grabadora.archivo.delete()
             principal.post {
+                if (miTurno != turno || finalizado) return@post
                 resultado
-                    .onSuccess { texto -> if (texto.isNotBlank()) insertar(texto) else aviso("No se entendió nada") }
+                    .onSuccess { texto ->
+                        if (texto.isNotBlank()) finalizar(texto)
+                        else {
+                            aviso("No se entendió nada")
+                            descartar()
+                        }
+                    }
                     .onFailure { e ->
                         Log.e(TAG, "Transcripción falló", e)
-                        aviso(e.message ?: "No se pudo transcribir")
+                        val respaldo = vivoFinal ?: enVivo?.parcial?.takeIf { it.isNotBlank() }
+                        if (respaldo != null) {
+                            aviso("Falló la pasada final; quedó el texto en vivo")
+                            finalizar(respaldo)
+                        } else {
+                            aviso(e.message ?: "No se pudo transcribir")
+                            descartar()
+                        }
                     }
-                cambiarEstado(Estado.REPOSO)
             }
         }
     }
 
+    /** Escribe el texto definitivo y deja todo en reposo. */
+    private fun finalizar(texto: String) {
+        if (finalizado) return
+        finalizado = true
+        enVivo?.cancelar()
+        enVivo = null
+        franja?.ocultar()
+        val e = escritor
+        escritor = null
+        grabadora.archivo.delete()
+        if (e == null || !e.escribir(texto)) pegar(e?.conEspacio(texto) ?: texto)
+        cambiarEstado(Estado.REPOSO)
+    }
+
+    /** Termina sin escribir nada y deja el campo como estaba. */
+    private fun descartar() {
+        finalizado = true
+        enVivo?.cancelar()
+        enVivo = null
+        franja?.ocultar()
+        escritor?.restaurar()
+        escritor = null
+        grabadora.archivo.delete()
+        cambiarEstado(Estado.REPOSO)
+    }
+
     private fun cancelarGrabacion() {
         principal.removeCallbacks(medirNivel)
-        if (::grabadora.isInitialized) {
-            grabadora.detener()
-            grabadora.archivo.delete()
-        }
+        if (::grabadora.isInitialized) grabadora.detener()
         detenerServicio()
-        if (estado == Estado.GRABANDO) cambiarEstado(Estado.REPOSO)
+        if (estado != Estado.REPOSO || !finalizado) descartar()
     }
 
     private fun detenerServicio() {
@@ -300,50 +391,129 @@ class BurbujaService : AccessibilityService(), SharedPreferences.OnSharedPrefere
 
     // ---------- Escribir el texto ----------
 
-    private fun insertar(dictado: String) {
-        val campo = destino?.takeIf { it.refresh() } ?: campoConFoco()
-        destino = null
-        if (campo == null) {
-            copiar(dictado)
-            aviso("Copiado: no encontré dónde escribir")
-            return
+    /**
+     * Escribe en el campo que tenía el foco al empezar, entre el texto que había antes y
+     * después del cursor. Cada llamada reemplaza lo escrito por la anterior.
+     */
+    private inner class Escritor(private val campo: AccessibilityNodeInfo?) {
+        private val original: String
+        private val selIni: Int
+        private val selFin: Int
+        private val antes: String
+        private val despues: String
+        private var tocado = false
+
+        /** Pasa a false si la app no acepta que le cambien el texto. */
+        var enCampo = campo != null
+            private set
+
+        init {
+            val actual = if (campo == null || campo.isShowingHintText) "" else campo.text?.toString().orEmpty()
+            var ini = campo?.textSelectionStart ?: -1
+            var fin = campo?.textSelectionEnd ?: -1
+            if (ini < 0 || fin < 0 || ini > actual.length || fin > actual.length) {
+                ini = actual.length; fin = actual.length
+            }
+            if (ini > fin) ini = fin.also { fin = ini }
+            original = actual
+            selIni = ini
+            selFin = fin
+            antes = actual.substring(0, ini)
+            despues = actual.substring(fin)
         }
 
-        val actual = if (campo.isShowingHintText) "" else campo.text?.toString().orEmpty()
-        var ini = campo.textSelectionStart
-        var fin = campo.textSelectionEnd
-        if (ini < 0 || fin < 0 || ini > actual.length || fin > actual.length) {
-            ini = actual.length; fin = actual.length
+        fun conEspacio(texto: String) =
+            if (antes.isNotEmpty() && !antes.last().isWhitespace() && texto.isNotEmpty() && texto.first() !in ".,;:!?)") " $texto"
+            else texto
+
+        fun escribir(texto: String): Boolean {
+            val c = campo ?: return false
+            if (!enCampo) return false
+            c.refresh()
+            val nuevo = conEspacio(texto)
+            if (!fijar(c, antes + nuevo + despues, antes.length + nuevo.length, antes.length + nuevo.length)) {
+                enCampo = false
+                return false
+            }
+            tocado = true
+            return true
         }
-        if (ini > fin) ini = fin.also { fin = ini }
 
-        val antes = actual.substring(0, ini)
-        var texto = dictado
-        if (antes.isNotEmpty() && !antes.last().isWhitespace() && texto.first() !in ".,;:!?)") texto = " $texto"
-        val nuevo = antes + texto + actual.substring(fin)
+        fun restaurar() {
+            val c = campo ?: return
+            if (tocado && c.refresh()) fijar(c, original, selIni, selFin)
+        }
 
-        val escrito = campo.performAction(
-            AccessibilityNodeInfo.ACTION_SET_TEXT,
-            Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, nuevo) }
-        )
-        if (escrito) {
-            val cursor = ini + texto.length
-            campo.performAction(
-                AccessibilityNodeInfo.ACTION_SET_SELECTION,
-                Bundle().apply {
-                    putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, cursor)
-                    putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, cursor)
-                }
+        private fun fijar(c: AccessibilityNodeInfo, texto: String, ini: Int, fin: Int): Boolean {
+            val ok = c.performAction(
+                AccessibilityNodeInfo.ACTION_SET_TEXT,
+                Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, texto) }
             )
-            return
+            if (ok) {
+                c.performAction(
+                    AccessibilityNodeInfo.ACTION_SET_SELECTION,
+                    Bundle().apply {
+                        putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, ini)
+                        putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, fin)
+                    }
+                )
+            }
+            return ok
         }
-        // Algunas apps no aceptan reemplazar el texto: probar pegando.
-        copiar(texto)
-        if (!campo.performAction(AccessibilityNodeInfo.ACTION_PASTE)) aviso("Copiado: pégalo con el teclado")
     }
 
-    private fun copiar(texto: String) {
+    /** Si la app no deja escribir directo: portapapeles y pegar. */
+    private fun pegar(texto: String) {
         getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("VoxTypee", texto))
+        val campo = campoConFoco()
+        if (campo == null || !campo.performAction(AccessibilityNodeInfo.ACTION_PASTE)) {
+            aviso("Copiado: pégalo con el teclado")
+        }
+    }
+
+    // ---------- Franja con el texto en vivo ----------
+
+    /** Muestra el texto en vivo sobre la burbuja, sin tocar el campo. */
+    private inner class Franja {
+        private val dp = resources.displayMetrics.density
+        private val vista = TextView(this@BurbujaService).apply {
+            setTextColor(0xFFFFFFFF.toInt())
+            textSize = 15f
+            maxLines = 4
+            ellipsize = TextUtils.TruncateAt.START
+            setPadding((14 * dp).toInt(), (10 * dp).toInt(), (14 * dp).toInt(), (10 * dp).toInt())
+            background = GradientDrawable().apply {
+                cornerRadius = 16 * dp
+                setColor(0xE61C1C24.toInt())
+            }
+        }
+        private val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.BOTTOM or Gravity.START
+            horizontalMargin = 0f
+        }
+
+        fun mostrar(texto: String) {
+            vista.text = texto
+            val alto = wm.currentWindowMetrics.bounds.height()
+            val arribaBurbuja = params().y
+            val lado = (12 * dp).toInt()
+            params.width = wm.currentWindowMetrics.bounds.width() - lado * 2
+            params.x = lado
+            params.y = (alto - arribaBurbuja + (4 * dp).toInt()).coerceAtLeast(0)
+            if (vista.parent == null) wm.addView(vista, params) else wm.updateViewLayout(vista, params)
+        }
+
+        fun ocultar() {
+            if (vista.parent != null) runCatching { wm.removeView(vista) }
+        }
+
+        private fun params() = this@BurbujaService.params ?: WindowManager.LayoutParams()
     }
 
     private fun aviso(texto: String) = Toast.makeText(this, texto, Toast.LENGTH_SHORT).show()
@@ -355,5 +525,7 @@ class BurbujaService : AccessibilityService(), SharedPreferences.OnSharedPrefere
     companion object {
         private const val MINIMO_MS = 400L
         private const val MAXIMO_MS = 5 * 60_000L
+        /** Cuánto esperar el texto final del modelo en vivo antes de recurrir al archivo. */
+        private const val ESPERA_VIVO_MS = 6_000L
     }
 }

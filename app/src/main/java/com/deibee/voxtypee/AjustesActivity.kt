@@ -2,6 +2,7 @@ package com.deibee.voxtypee
 
 import android.Manifest
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -19,14 +20,12 @@ import android.view.WindowInsets
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.view.accessibility.AccessibilityManager
-import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.RadioButton
 import android.widget.RadioGroup
 import android.widget.ScrollView
-import android.widget.Spinner
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
@@ -44,6 +43,7 @@ class AjustesActivity : Activity() {
     private lateinit var ayudaRestringidos: LinearLayout
     private lateinit var campoClave: EditText
     private lateinit var listaVocabulario: LinearLayout
+    private lateinit var microfonoActual: TextView
 
     private val idiomas = listOf(
         "es" to "Español", "en" to "English", "pt" to "Português", "fr" to "Français",
@@ -63,6 +63,8 @@ class AjustesActivity : Activity() {
 
         contenido.addView(tarjetaPermisos())
         contenido.addView(tarjetaProveedor())
+        contenido.addView(tarjetaVivo())
+        contenido.addView(tarjetaMicrofono())
         contenido.addView(tarjetaModo())
         contenido.addView(tarjetaVocabulario())
         contenido.addView(tarjetaProbar())
@@ -93,6 +95,7 @@ class AjustesActivity : Activity() {
     override fun onResume() {
         super.onResume()
         refrescarPermisos()
+        refrescarMicrofono()
     }
 
     // ---------- Tarjetas ----------
@@ -152,28 +155,16 @@ class AjustesActivity : Activity() {
         }
         addView(campoEndpoint)
 
-        addView(etiqueta("Modelo"))
+        addView(etiqueta("Modelo final (archivo)"))
         val campoModelo = campo(Ajustes.MODELO_POR_DEFECTO).apply { setText(ajustes.modelo) }
         addView(campoModelo)
 
-        addView(etiqueta("Idioma"))
-        val selectorIdioma = Spinner(this@AjustesActivity).apply {
-            adapter = object : ArrayAdapter<String>(
-                this@AjustesActivity, android.R.layout.simple_spinner_dropdown_item, idiomas.map { it.second }
-            ) {
-                // El layout del sistema trae texto blanco en algunos temas (One UI): forzar el nuestro.
-                override fun getView(posicion: Int, vista: View?, padre: ViewGroup) =
-                    (super.getView(posicion, vista, padre) as TextView).apply { setTextColor(getColor(R.color.texto)) }
+        addView(etiqueta("Modelo en vivo"))
+        val campoModeloVivo = campo(Ajustes.MODELO_VIVO_POR_DEFECTO).apply { setText(ajustes.modeloVivo) }
+        addView(campoModeloVivo)
 
-                override fun getDropDownView(posicion: Int, vista: View?, padre: ViewGroup) =
-                    (super.getDropDownView(posicion, vista, padre) as TextView).apply {
-                        setTextColor(getColor(R.color.texto))
-                        setBackgroundColor(getColor(R.color.tarjeta))
-                    }
-            }
-            setSelection(idiomas.indexOfFirst { it.first == ajustes.idioma }.coerceAtLeast(0))
-        }
-        addView(selectorIdioma)
+        addView(etiqueta("Idioma"))
+        addView(selectorIdioma())
 
         addView(boton("Guardar") {
             val clave = campoClave.text.toString()
@@ -184,9 +175,78 @@ class AjustesActivity : Activity() {
             }
             ajustes.endpoint = campoEndpoint.text.toString()
             ajustes.modelo = campoModelo.text.toString()
-            ajustes.idioma = idiomas[selectorIdioma.selectedItemPosition].first
+            ajustes.modeloVivo = campoModeloVivo.text.toString()
             Toast.makeText(this@AjustesActivity, "Guardado", Toast.LENGTH_SHORT).show()
         }.arriba(14))
+    }
+
+    /** Una fila que abre la lista de idiomas (el Spinner del sistema no muestra el valor en One UI). */
+    private fun selectorIdioma(): TextView {
+        fun nombre() = idiomas.firstOrNull { it.first == ajustes.idioma }?.second ?: idiomas[0].second
+        return texto("${nombre()}  ▾", 16f).apply {
+            setPadding(px(4), px(12), px(4), px(12))
+            setOnClickListener {
+                val actual = idiomas.indexOfFirst { it.first == ajustes.idioma }.coerceAtLeast(0)
+                AlertDialog.Builder(this@AjustesActivity)
+                    .setTitle("Idioma")
+                    .setSingleChoiceItems(idiomas.map { it.second }.toTypedArray(), actual) { dialogo, i ->
+                        ajustes.idioma = idiomas[i].first
+                        text = "${nombre()}  ▾"
+                        dialogo.dismiss()
+                    }
+                    .show()
+            }
+        }
+    }
+
+    private fun tarjetaVivo() = tarjeta("Texto en vivo").apply {
+        addView(texto("Mientras hablas, el texto va apareciendo.", 13f, suave = true).abajo(4))
+        val opciones = listOf(
+            Ajustes.VIVO_CAMPO to "En el mismo campo donde escribes",
+            Ajustes.VIVO_FRANJA to "En una franja sobre el teclado (se escribe al terminar)",
+            Ajustes.VIVO_APAGADO to "Apagado: solo al terminar",
+        )
+        val grupo = RadioGroup(this@AjustesActivity)
+        val botones = opciones.map { (clave, nombre) -> clave to radio(nombre).also { grupo.addView(it) } }
+        grupo.check(botones.first { it.first == ajustes.vivo }.second.id)
+        grupo.setOnCheckedChangeListener { _, id -> ajustes.vivo = botones.first { it.second.id == id }.first }
+        addView(grupo)
+
+        addView(Switch(this@AjustesActivity).apply {
+            text = "Pasada final con el modelo de archivo: más precisa, cuesta ~el doble y tarda ~2 s más"
+            textSize = 15f
+            setTextColor(getColor(R.color.texto))
+            isChecked = ajustes.pasadaFinal
+            setOnCheckedChangeListener { _, activo -> ajustes.pasadaFinal = activo }
+        }.arriba(10))
+    }
+
+    private fun tarjetaMicrofono() = tarjeta("Micrófono").apply {
+        val grupo = RadioGroup(this@AjustesActivity)
+        val auto = radio("Automático: audífonos si están conectados")
+        val telefono = radio("Siempre el del teléfono")
+        grupo.addView(auto)
+        grupo.addView(telefono)
+        grupo.check(if (ajustes.soloMicrofonoTelefono) telefono.id else auto.id)
+        grupo.setOnCheckedChangeListener { _, id ->
+            ajustes.soloMicrofonoTelefono = id == telefono.id
+            refrescarMicrofono()
+        }
+        addView(grupo)
+        microfonoActual = texto("", 13f, suave = true).arriba(6)
+        addView(microfonoActual)
+        addView(texto(
+            "Con audífonos Bluetooth el audio pasa a modo llamada mientras dictas: la música se pausa.",
+            13f, suave = true
+        ).arriba(4))
+    }
+
+    private fun refrescarMicrofono() {
+        val audifonos = Grabadora(this).audifonos()
+        microfonoActual.text = when {
+            ajustes.soloMicrofonoTelefono || audifonos == null -> "Ahora usaría: micrófono del teléfono"
+            else -> "Ahora usaría: ${audifonos.productName?.toString()?.ifBlank { null } ?: "audífonos"}"
+        }
     }
 
     private fun tarjetaModo() = tarjeta("Cómo se usa la burbuja").apply {

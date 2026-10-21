@@ -57,3 +57,7 @@ kotlin {
         jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
     }
 }
+
+dependencies {
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+}

@@ -31,6 +31,25 @@ class Ajustes(context: Context) {
         get() = prefs.getString(K_MODELO, null) ?: MODELO_POR_DEFECTO
         set(valor) = prefs.edit().putString(K_MODELO, valor.trim().ifBlank { MODELO_POR_DEFECTO }).apply()
 
+    var modeloVivo: String
+        get() = prefs.getString(K_MODELO_VIVO, null) ?: MODELO_VIVO_POR_DEFECTO
+        set(valor) = prefs.edit().putString(K_MODELO_VIVO, valor.trim().ifBlank { MODELO_VIVO_POR_DEFECTO }).apply()
+
+    /** Dónde se ve el texto mientras hablas: [VIVO_CAMPO], [VIVO_FRANJA] o [VIVO_APAGADO]. */
+    var vivo: String
+        get() = prefs.getString(K_VIVO, VIVO_CAMPO) ?: VIVO_CAMPO
+        set(valor) = prefs.edit().putString(K_VIVO, valor).apply()
+
+    /** Al terminar, el audio completo pasa por el modelo final y ese texto es el que queda. */
+    var pasadaFinal: Boolean
+        get() = prefs.getBoolean(K_PASADA_FINAL, true)
+        set(valor) = prefs.edit().putBoolean(K_PASADA_FINAL, valor).apply()
+
+    /** false = usar audífonos si están conectados. */
+    var soloMicrofonoTelefono: Boolean
+        get() = prefs.getBoolean(K_SOLO_TELEFONO, false)
+        set(valor) = prefs.edit().putBoolean(K_SOLO_TELEFONO, valor).apply()
+
     /** Código ISO del idioma; vacío = que el modelo lo detecte. */
     var idioma: String
         get() = prefs.getString(K_IDIOMA, "es") ?: "es"
@@ -47,10 +66,6 @@ class Ajustes(context: Context) {
     var vocabulario: List<String>
         get() = prefs.getString(K_VOCABULARIO, "").orEmpty().lines().filter { it.isNotBlank() }
         set(valor) = prefs.edit().putString(K_VOCABULARIO, valor.joinToString("\n")).apply()
-
-    /** Igual que el initial_prompt de Voxtype en el escritorio. */
-    val prompt: String
-        get() = vocabulario.takeIf { it.isNotEmpty() }?.let { "Términos: ${it.joinToString(", ")}." } ?: ""
 
     // Posición de la burbuja: distancia al borde derecho y altura sobre el teclado, en px.
     var margenDerecho: Int
@@ -93,10 +108,18 @@ class Ajustes(context: Context) {
     companion object {
         const val ENDPOINT_OPENAI = "https://api.openai.com"
         const val MODELO_POR_DEFECTO = "gpt-transcribe"
+        const val MODELO_VIVO_POR_DEFECTO = "gpt-live-transcribe"
+        const val VIVO_CAMPO = "campo"
+        const val VIVO_FRANJA = "franja"
+        const val VIVO_APAGADO = "apagado"
         private const val ALIAS = "voxtypee-clave"
         const val K_CLAVE = "clave"
         const val K_ENDPOINT = "endpoint"
         const val K_MODELO = "modelo"
+        const val K_MODELO_VIVO = "modelo_vivo"
+        const val K_VIVO = "vivo"
+        const val K_PASADA_FINAL = "pasada_final"
+        const val K_SOLO_TELEFONO = "solo_telefono"
         const val K_IDIOMA = "idioma"
         const val K_MANTENER = "mantener"
         const val K_ACTIVO = "activo"

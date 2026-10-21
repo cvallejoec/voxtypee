@@ -38,10 +38,14 @@ Para actualizar, descarga la APK nueva e instálala encima: se conservan los aju
 |---|---|---|
 | API key | — | Se guarda cifrada con el Android Keystore; nunca sale del teléfono salvo hacia el endpoint. |
 | Endpoint | `https://api.openai.com` | Cualquier API compatible con `/v1/audio/transcriptions`. |
-| Modelo | `gpt-transcribe` | El modelo de transcripción. |
+| Modelo final | `gpt-transcribe` | Transcribe el audio completo al terminar. |
+| Modelo en vivo | `gpt-live-transcribe` | Va escribiendo mientras hablas (Realtime API por WebSocket). |
 | Idioma | Español | O detección automática. |
+| Texto en vivo | En el campo | **En el campo**: se escribe mientras hablas y se corrige al final. **Franja**: se ve sobre el teclado y se escribe al terminar. **Apagado**: solo al terminar. |
+| Pasada final | Encendida | Al terminar, el audio completo pasa por el modelo final y ese texto reemplaza al de en vivo. Más precisa; cuesta ~el doble. Apagada, queda el texto del modelo en vivo. |
+| Micrófono | Automático | Usa los audífonos conectados (Bluetooth, USB o cable) y, si no hay, el del teléfono. Con Bluetooth el audio pasa a modo llamada mientras dictas. |
 | Modo | Tocar | **Tocar**: toca para empezar y para terminar; arrastra la burbuja para moverla. **Mantener**: habla mientras la mantienes; arrastra afuera para cancelar. |
-| Vocabulario | — | Nombres, siglas y jerga; van al modelo como pista (`prompt`). |
+| Vocabulario | — | Nombres, siglas y jerga; van al modelo como `keywords` (con `prompt` los modelos gpt-*transcribe casi no los respetan). |
 
 ## Privacidad
 
