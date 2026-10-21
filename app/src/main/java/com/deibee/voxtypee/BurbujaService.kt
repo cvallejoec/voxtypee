@@ -108,9 +108,13 @@ class BurbujaService : AccessibilityService(), SharedPreferences.OnSharedPrefere
         val ancho = wm.currentWindowMetrics.bounds.width()
         val margen = ajustes.margenDerecho.takeIf { it >= 0 } ?: (8 * resources.displayMetrics.density).toInt()
         val altura = ajustes.alturaSobreTeclado.takeIf { it >= 0 } ?: 0
-        p.x = (ancho - b.lado - margen).coerceIn(0, ancho - b.lado)
-        p.y = (arribaDelTeclado - b.lado - altura).coerceAtLeast(0)
+        val x = (ancho - b.lado - margen).coerceIn(0, ancho - b.lado)
+        val y = (arribaDelTeclado - b.lado - altura).coerceAtLeast(0)
         tecladoArriba = arribaDelTeclado
+        // Mover la burbuja genera otro evento de ventanas: solo tocarla si cambió algo.
+        if (b.parent != null && p.x == x && p.y == y) return
+        p.x = x
+        p.y = y
         if (b.parent == null) wm.addView(b, p) else wm.updateViewLayout(b, p)
     }
 
